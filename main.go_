@@ -1,0 +1,192 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"sync"
+	"time"
+
+	"golang.org/x/term"
+
+	"github.com/dyuri/termtest/termutil"
+	"github.com/dyuri/termtest/ansi"
+)
+
+type ChanWriter struct {
+	output chan byte
+}
+
+func NewChanWriter(output chan byte) *ChanWriter {
+	return &ChanWriter{output: output}
+}
+
+func (w *ChanWriter) Write(data []byte) (int, error) {
+	for _, b := range data {
+		w.output <- b
+	}
+	return len(data), nil
+}
+
+
+type Term struct {
+	terminal *termutil.Terminal
+	output chan byte
+	closeChan chan struct{}
+}
+
+func (t *Term) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	return t.terminal.Pty().Write(p)
+}
+
+func (t *Term) Read(p []byte) (n int, err error) {
+	for i := 0; i < cap(p); i++ {
+		select {
+		case b := <- t.output:
+			p[i] = b
+		default:
+			if i == 0 {
+				select {
+				case <- t.closeChan:
+					return 0, io.EOF
+				default:
+					time.Sleep(time.Millisecond * 10)
+				}
+			}
+			return i, nil
+		}
+	}
+	return cap(p), nil
+}
+
+func main() {
+	fmt.Println("Hello, World!")
+	terminal := termutil.New()
+	waitGroup := sync.WaitGroup{}
+
+	updateChan := make(chan struct{}, 1)
+	closeChan := make(chan struct{})
+	out := make(chan byte, 0xffff)
+	stdoutWriter := NewChanWriter(out)
+	writer := ansi.NewWriter(stdoutWriter)
+	rows, cols := uint16(20), uint16(80)
+
+	t := &Term{
+		terminal: terminal,
+		output: out,
+		closeChan: closeChan,
+	}
+
+
+	// parent term
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return
+	}
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
+
+
+	render := func() {
+		buffer := terminal.GetActiveBuffer()
+		if buffer == nil {
+			return
+		}
+
+		cursorX, cursorY := buffer.CursorColumn(), buffer.CursorLine()
+
+		writer.SetCursorVisible(false)
+		writer.ResetFormatting()
+
+		// replace
+		_, _ = writer.Write([]byte("\x1b[?4l"))
+
+		// TODO add offset
+
+		// var lastCellAttr termutil.CellAttributes
+
+		for y := uint16(0); y < rows; y++ {
+			for x := uint16(0); x < cols; x++ {
+				cell := buffer.GetCell(x, y)
+
+				writer.MoveCursorTo(y, x)
+
+				if cell != nil {
+					mRune := cell.Rune()
+
+					// TODO check sunder
+
+					if mRune.Rune < 0x20 {
+						mRune.Rune = 0x20
+					}
+
+					// TODO
+					// sgr := cell.Attr().GetDiffANSI(&termutil.DefaultTheme, lastCellAttr)
+					sgr := ""
+					_, _ = writer.Write([]byte(sgr + string(mRune.Rune)))
+					// lastCellAttr = cell.Attr()
+				} else {
+					// attr := termutil.CellAttributes{}
+					// TODO
+					// sgr := attr.GetDiffANSI(&termutil.DefaultTheme, lastCellAttr)
+					sgr := ""
+					// lastCellAttr = attr
+					_, _ = writer.Write([]byte(sgr + " "))
+				}
+			}
+
+		}
+
+		writer.MoveCursorTo(cursorY, cursorX)
+		writer.SetCursorVisible(true)
+	}
+
+	go func() {
+		for {
+			select {
+			case <-updateChan:
+				render()
+			case <-closeChan:
+				fmt.Println("Close")
+				return
+			}
+		}
+	}()
+
+	if err := terminal.Run(updateChan, 20, 80); err != nil {
+		fmt.Println("Error: ", err)
+	}
+
+	fmt.Println("Term: ", terminal)
+	fmt.Println("Pty: ", terminal.Pty())
+
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		_, _ = io.Copy(t, os.Stdin)
+	}()
+
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		for {
+			select {
+			case <- updateChan:
+				render()
+			case <- closeChan:
+				return
+			}
+		}
+	}()
+
+	_, err = io.Copy(os.Stdout, t)
+
+	if err != nil {
+		fmt.Println("Error: ", err)
+	}
+}
