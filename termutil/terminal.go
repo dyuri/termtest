@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -20,6 +21,7 @@ const (
 
 // Terminal communicates with the underlying terminal
 type Terminal struct {
+	mu		     sync.Mutex
 	pty          *os.File
 	updateChan   chan struct{}
 	processChan  chan MeasuredRune
@@ -128,11 +130,13 @@ func (t *Terminal) Run(updateChan chan struct{}, rows uint16, cols uint16) error
 	}
 
 	// Set stdin in raw mode.
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		panic(err)
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		oldState, err := term.MakeRaw(fd)
+		if err != nil {
+			panic(err)
+		}
+		defer func() { _ = term.Restore(fd, oldState) }() // Best effort.
 	}
-	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }() // Best effort.
 
 	go t.process()
 
@@ -140,8 +144,6 @@ func (t *Terminal) Run(updateChan chan struct{}, rows uint16, cols uint16) error
 	close(t.closeChan)
 	return nil
 }
-
-// TODO close() method and kill goroutines
 
 func (t *Terminal) requestRender() {
 	select {
@@ -189,31 +191,31 @@ func (t *Terminal) processRunes(runes ...MeasuredRune) (renderRequired bool) {
 			//TODO handle this properly
 			continue
 		case 0x8: //backspace
-			t.GetActiveBuffer().backspace()
+			t.activeBuffer.backspace()
 			renderRequired = true
 		case 0x9: //tab
-			t.GetActiveBuffer().tab()
+			t.activeBuffer.tab()
 			renderRequired = true
 		case 0xa, 0xc: //newLine/form feed
-			t.GetActiveBuffer().newLine()
+			t.activeBuffer.newLine()
 			renderRequired = true
 		case 0xb: //vertical tab
-			t.GetActiveBuffer().verticalTab()
+			t.activeBuffer.verticalTab()
 			renderRequired = true
 		case 0xd: //carriageReturn
-			t.GetActiveBuffer().carriageReturn()
+			t.activeBuffer.carriageReturn()
 			renderRequired = true
 		case 0xe: //shiftOut
-			t.GetActiveBuffer().currentCharset = 1
+			t.activeBuffer.currentCharset = 1
 		case 0xf: //shiftIn
-			t.GetActiveBuffer().currentCharset = 0
+			t.activeBuffer.currentCharset = 0
 		default:
 			if r.Rune < 0x20 {
 				// TODO handle any other control chars here
 				continue
 			}
 
-			t.GetActiveBuffer().write(t.translateRune(r))
+			t.activeBuffer.write(t.translateRune(r))
 			renderRequired = true
 		}
 	}
@@ -222,7 +224,7 @@ func (t *Terminal) processRunes(runes ...MeasuredRune) (renderRequired bool) {
 }
 
 func (t *Terminal) translateRune(b MeasuredRune) MeasuredRune {
-	table := t.GetActiveBuffer().charsets[t.GetActiveBuffer().currentCharset]
+	table := t.activeBuffer.charsets[t.activeBuffer.currentCharset]
 	if table == nil {
 		return b
 	}
@@ -261,3 +263,12 @@ func (t *Terminal) useMainBuffer() {
 func (t *Terminal) useAltBuffer() {
 	t.switchBuffer(AltBuffer)
 }
+
+func (t *Terminal) Lock() {
+	t.mu.Lock()
+}
+
+func (t *Terminal) Unlock() {
+	t.mu.Unlock()
+}
+

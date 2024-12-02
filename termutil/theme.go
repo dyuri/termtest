@@ -26,6 +26,8 @@ const (
 	ColourBrightMagenta
 	ColourBrightCyan
 	ColourBrightWhite
+	ColorBackground
+	ColorForeground
 )
 
 type Theme struct {
@@ -83,6 +85,12 @@ var (
 			ColourBrightWhite: color.RGBA{
 				R: 255, G: 255, B: 255, A: 255,
 			},
+			ColorBackground: color.RGBA{
+				R: 0, G: 0, B: 0, A: 255,
+			},
+			ColorForeground: color.RGBA{
+				R: 255, G: 255, B: 255, A: 255,
+			},
 		},
 	}
 	map4Bit = map[uint8]Colour{
@@ -120,6 +128,22 @@ var (
 		107: ColourBrightWhite,
 	}
 )
+
+func (t *Theme) DefaultBackground() color.Color {
+	c, ok := t.colourMap[ColorBackground]
+	if !ok {
+		return color.Black
+	}
+	return c
+}
+
+func (t *Theme) DefaultForeground() color.Color {
+	c, ok := t.colourMap[ColorForeground]
+	if !ok {
+		return color.White
+	}
+	return c
+}
 
 func (t *Theme) ColourFrom4Bit(code uint8) color.Color {
 	colour, ok := map4Bit[code]

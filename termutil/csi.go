@@ -45,13 +45,6 @@ func (t *Terminal) handleCSI(readChan chan MeasuredRune) (renderRequired bool) {
 
 	t.log("CSI P(%q) I(%q) %c", strings.Join(params, ";"), string(intermediate), final)
 
-	for _, b := range intermediate {
-		t.processRunes(MeasuredRune{
-			Rune:  b,
-			Width: 1, // TODO: measure these? should only be control characters...
-		})
-	}
-
 	switch final {
 	case 'c':
 		return t.csiSendDeviceAttributesHandler(params)
@@ -107,15 +100,21 @@ func (t *Terminal) handleCSI(readChan chan MeasuredRune) (renderRequired bool) {
 		return t.csiEraseCharactersHandler(params)
 	case '@':
 		return t.csiInsertBlankCharactersHandler(params)
-	default:
-		// TODO review this:
-		// if this is an unknown CSI sequence, write it to stdout as we can't handle it?
-		//_ = t.writeToRealStdOut(append([]rune{0x1b, '['}, raw...)...)
-		_ = raw
-		t.log("UNKNOWN CSI P(%s) I(%s) %c", strings.Join(params, ";"), string(intermediate), final)
-		return false
 	}
 
+	for _, b := range intermediate {
+		t.processRunes(MeasuredRune{
+			Rune:  b,
+			Width: 1,
+		})
+	}
+
+	// TODO review this:
+	// if this is an unknown CSI sequence, write it to stdout as we can't handle it?
+	//_ = t.writeToRealStdOut(append([]rune{0x1b, '['}, raw...)...)
+	_ = raw
+	t.log("UNKNOWN CSI P(%s) I(%s) %c", strings.Join(params, ";"), string(intermediate), final)
+	return false
 }
 
 // CSI c
@@ -744,8 +743,12 @@ func (t *Terminal) sgrSequenceHandler(params []string) bool {
 			*attr = CellAttributes{}
 		case "1", "01":
 			t.GetActiveBuffer().getCursorAttr().bold = true
+			t.GetActiveBuffer().getCursorAttr().dim = false
 		case "2", "02":
+			t.GetActiveBuffer().getCursorAttr().bold = false
 			t.GetActiveBuffer().getCursorAttr().dim = true
+		case "3", "03":
+			t.GetActiveBuffer().getCursorAttr().italic = true
 		case "4", "04":
 			t.GetActiveBuffer().getCursorAttr().underline = true
 		case "5", "05":
@@ -754,12 +757,15 @@ func (t *Terminal) sgrSequenceHandler(params []string) bool {
 			t.GetActiveBuffer().getCursorAttr().inverse = true
 		case "8", "08":
 			t.GetActiveBuffer().getCursorAttr().hidden = true
+		case "9", "09":
+			t.GetActiveBuffer().getCursorAttr().strikethrough = true
 		case "21":
 			t.GetActiveBuffer().getCursorAttr().bold = false
 		case "22":
+			t.GetActiveBuffer().getCursorAttr().bold = false
 			t.GetActiveBuffer().getCursorAttr().dim = false
 		case "23":
-			// not italic
+			t.GetActiveBuffer().getCursorAttr().italic = false
 		case "24":
 			t.GetActiveBuffer().getCursorAttr().underline = false
 		case "25":
@@ -769,11 +775,15 @@ func (t *Terminal) sgrSequenceHandler(params []string) bool {
 		case "28":
 			t.GetActiveBuffer().getCursorAttr().hidden = false
 		case "29":
-			// not strikethrough
+			t.GetActiveBuffer().getCursorAttr().strikethrough = false
 		case "38": // set foreground
 			t.GetActiveBuffer().getCursorAttr().fgColour, _ = t.theme.ColourFromAnsi(params[i:], false)
 		case "48": // set background
 			t.GetActiveBuffer().getCursorAttr().bgColour, _ = t.theme.ColourFromAnsi(params[i:], true)
+		case "39":
+			t.GetActiveBuffer().getCursorAttr().fgColour = t.theme.DefaultForeground()
+		case "49":
+			t.GetActiveBuffer().getCursorAttr().bgColour = t.theme.DefaultBackground()
 		default:
 			bi, err := strconv.Atoi(p)
 			if err != nil {
@@ -781,9 +791,9 @@ func (t *Terminal) sgrSequenceHandler(params []string) bool {
 			}
 			i := byte(bi)
 			switch true {
-			case i >= 30 && i <= 37, i >= 90 && i <= 97, i == 39:
+			case i >= 30 && i <= 37, i >= 90 && i <= 97:
 				t.GetActiveBuffer().getCursorAttr().fgColour = t.theme.ColourFrom4Bit(i)
-			case i >= 40 && i <= 47, i >= 100 && i <= 107, i == 49:
+			case i >= 40 && i <= 47, i >= 100 && i <= 107:
 				t.GetActiveBuffer().getCursorAttr().bgColour = t.theme.ColourFrom4Bit(i)
 			}
 

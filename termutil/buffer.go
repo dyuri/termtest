@@ -3,7 +3,6 @@ package termutil
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 )
 
@@ -11,8 +10,7 @@ const TabSize = 8
 
 type Buffer struct {
 	lines                 []Line
-	savedX                uint16
-	savedY                uint16
+	savedCursorPos        Position
 	savedCursorAttr       *CellAttributes
 	savedCharsets         []*map[rune]rune
 	savedCurrentCharset   int
@@ -20,8 +18,7 @@ type Buffer struct {
 	bottomMargin          uint // see DECSTBM docs - this is for scrollable regions
 	viewWidth             uint16
 	viewHeight            uint16
-	cursorX               uint16
-	cursorY               uint16
+	cursorPosition        Position
 	cursorAttr            CellAttributes
 	scrollLinesFromBottom uint
 	maxLines              uint64
@@ -35,8 +32,8 @@ type Buffer struct {
 }
 
 type Position struct {
-	Line int
-	Col  int
+	Line uint64
+	Col  uint16
 }
 
 func comparePositions(pos1 *Position, pos2 *Position) int {
@@ -78,7 +75,8 @@ func (buffer *Buffer) HasScrollableRegion() bool {
 }
 
 func (buffer *Buffer) InScrollableRegion() bool {
-	return buffer.HasScrollableRegion() && uint(buffer.cursorY) >= buffer.topMargin && uint(buffer.cursorY) <= buffer.bottomMargin
+	currentLine := uint(buffer.RawLine())
+	return buffer.HasScrollableRegion() && currentLine >= buffer.topMargin && currentLine <= buffer.bottomMargin
 }
 
 // NOTE: bottom is exclusive
@@ -124,8 +122,7 @@ func (buffer *Buffer) areaScrollUp(lines uint16) {
 func (buffer *Buffer) saveCursor() {
 	copiedAttr := buffer.cursorAttr
 	buffer.savedCursorAttr = &copiedAttr
-	buffer.savedX = buffer.cursorX
-	buffer.savedY = buffer.cursorY
+	buffer.savedCursorPos = buffer.cursorPosition
 	buffer.savedCharsets = make([]*map[rune]rune, len(buffer.charsets))
 	copy(buffer.savedCharsets, buffer.charsets)
 	buffer.savedCurrentCharset = buffer.currentCharset
@@ -136,8 +133,7 @@ func (buffer *Buffer) restoreCursor() {
 		copiedAttr := *buffer.savedCursorAttr
 		buffer.cursorAttr = copiedAttr // @todo ignore colors?
 	}
-	buffer.cursorX = buffer.savedX
-	buffer.cursorY = buffer.savedY
+	buffer.cursorPosition = buffer.savedCursorPos
 	if buffer.savedCharsets != nil {
 		buffer.charsets = make([]*map[rune]rune, len(buffer.savedCharsets))
 		copy(buffer.charsets, buffer.savedCharsets)
@@ -169,24 +165,25 @@ func (buffer *Buffer) getRawCell(viewCol uint16, rawLine uint64) *Cell {
 // Column returns cursor column
 func (buffer *Buffer) CursorColumn() uint16 {
 	// @todo originMode and left margin
-	return buffer.cursorX
+	return buffer.cursorPosition.Col
 }
 
 // CursorLineAbsolute returns absolute cursor line coordinate (ignoring Origin Mode)
 func (buffer *Buffer) CursorLineAbsolute() uint16 {
-	return buffer.cursorY
+	return buffer.convertRawLineToViewLine(buffer.cursorPosition.Line)
 }
 
 // CursorLine returns cursor line (in Origin Mode it is relative to the top margin)
 func (buffer *Buffer) CursorLine() uint16 {
+	cursorY := uint16(buffer.cursorPosition.Line)
 	if buffer.modes.OriginMode {
-		result := buffer.cursorY - uint16(buffer.topMargin)
+		result := cursorY - uint16(buffer.topMargin)
 		if result < 0 {
 			result = 0
 		}
 		return result
 	}
-	return buffer.cursorY
+	return cursorY
 }
 
 func (buffer *Buffer) TopMargin() uint {
@@ -199,7 +196,7 @@ func (buffer *Buffer) BottomMargin() uint {
 
 // translates the cursor line to the raw buffer line
 func (buffer *Buffer) RawLine() uint64 {
-	return buffer.convertViewLineToRawLine(buffer.cursorY)
+	return buffer.convertViewLineToRawLine(uint16(buffer.cursorPosition.Line))
 }
 
 func (buffer *Buffer) convertViewLineToRawLine(viewLine uint16) uint64 {
@@ -295,7 +292,7 @@ func (buffer *Buffer) insertBlankCharacters(count int) {
 	index := int(buffer.RawLine())
 	for i := 0; i < count; i++ {
 		cells := buffer.lines[index].cells
-		buffer.lines[index].cells = append(cells[:buffer.cursorX], append([]Cell{buffer.defaultCell(true)}, cells[buffer.cursorX:]...)...)
+		buffer.lines[index].cells = append(cells[:buffer.cursorPosition.Col], append([]Cell{buffer.defaultCell(true)}, cells[buffer.cursorPosition.Col:]...)...)
 	}
 }
 
@@ -306,7 +303,7 @@ func (buffer *Buffer) insertLines(count int) {
 		return
 	}
 
-	buffer.cursorX = 0
+	buffer.cursorPosition.Col = 0
 
 	for i := 0; i < count; i++ {
 		buffer.insertLine()
@@ -321,7 +318,7 @@ func (buffer *Buffer) deleteLines(count int) {
 		return
 	}
 
-	buffer.cursorX = 0
+	buffer.cursorPosition.Col = 0
 
 	for i := 0; i < count; i++ {
 		buffer.deleteLine()
@@ -336,8 +333,8 @@ func (buffer *Buffer) index() {
 
 	if buffer.InScrollableRegion() {
 
-		if uint(buffer.cursorY) < buffer.bottomMargin {
-			buffer.cursorY++
+		if uint(buffer.cursorPosition.Line) < buffer.bottomMargin {
+			buffer.cursorPosition.Line++
 		} else {
 			buffer.areaScrollUp(1)
 		}
@@ -345,7 +342,7 @@ func (buffer *Buffer) index() {
 		return
 	}
 
-	if buffer.cursorY >= buffer.ViewHeight()-1 {
+	if uint16(buffer.cursorPosition.Line) >= buffer.ViewHeight()-1 {
 		buffer.lines = append(buffer.lines, newLine())
 		maxLines := buffer.GetMaxLines()
 		if uint64(len(buffer.lines)) > maxLines {
@@ -353,16 +350,16 @@ func (buffer *Buffer) index() {
 			buffer.lines = buffer.lines[:maxLines]
 		}
 	} else {
-		buffer.cursorY++
+		buffer.cursorPosition.Line++
 	}
 }
 
 func (buffer *Buffer) reverseIndex() {
 
-	if uint(buffer.cursorY) == buffer.topMargin {
+	if uint(buffer.cursorPosition.Line) == buffer.topMargin {
 		buffer.areaScrollDown(1)
-	} else if buffer.cursorY > 0 {
-		buffer.cursorY--
+	} else if buffer.cursorPosition.Line > 0 {
+		buffer.cursorPosition.Line--
 	}
 }
 
@@ -386,8 +383,8 @@ func (buffer *Buffer) write(runes ...MeasuredRune) {
 			for int(buffer.CursorColumn()) >= len(line.cells) {
 				line.append(buffer.defaultCell(int(buffer.CursorColumn()) == len(line.cells)))
 			}
-			line.cells[buffer.cursorX].attr = buffer.cursorAttr
-			line.cells[buffer.cursorX].setRune(r)
+			line.cells[buffer.cursorPosition.Col].attr = buffer.cursorAttr
+			line.cells[buffer.cursorPosition.Col].setRune(r)
 			buffer.incrementCursorPosition()
 			continue
 		}
@@ -432,7 +429,7 @@ func (buffer *Buffer) incrementCursorPosition() {
 	// we can increment one column past the end of the line.
 	// this is effectively the beginning of the next line, except when we \r etc.
 	if buffer.CursorColumn() < buffer.Width() {
-		buffer.cursorX++
+		buffer.cursorPosition.Col++
 	}
 }
 
@@ -440,12 +437,12 @@ func (buffer *Buffer) inDoWrap() bool {
 	// xterm uses 'do_wrap' flag for this special terminal state
 	// we use the cursor position right after the boundary
 	// let's see how it works out
-	return buffer.cursorX == buffer.viewWidth // @todo rightMargin
+	return buffer.cursorPosition.Col == buffer.viewWidth // @todo rightMargin
 }
 
 func (buffer *Buffer) backspace() {
 
-	if buffer.cursorX == 0 {
+	if buffer.cursorPosition.Col == 0 {
 		line := buffer.getCurrentLine()
 		if line.wrapped {
 			buffer.movePosition(int16(buffer.Width()-1), -1)
@@ -467,20 +464,20 @@ func (buffer *Buffer) carriageReturn() {
 		if line == nil {
 			break
 		}
-		if line.wrapped && buffer.cursorY > 0 {
-			buffer.cursorY--
+		if line.wrapped && buffer.cursorPosition.Line > 0 {
+			buffer.cursorPosition.Line--
 		} else {
 			break
 		}
 	}
 
-	buffer.cursorX = 0
+	buffer.cursorPosition.Col = 0
 }
 
 func (buffer *Buffer) tab() {
 
-	tabStop := buffer.getNextTabStopAfter(buffer.cursorX)
-	for buffer.cursorX < tabStop && buffer.cursorX < buffer.viewWidth-1 { // @todo rightMargin
+	tabStop := buffer.getNextTabStopAfter(buffer.cursorPosition.Col)
+	for buffer.cursorPosition.Col < tabStop && buffer.cursorPosition.Col < buffer.viewWidth-1 { // @todo rightMargin
 		buffer.write(MeasuredRune{Rune: ' ', Width: 1})
 	}
 }
@@ -528,7 +525,7 @@ func (buffer *Buffer) verticalTab() {
 func (buffer *Buffer) newLineEx(forceCursorToMargin bool) {
 
 	if buffer.IsNewLineMode() || forceCursorToMargin {
-		buffer.cursorX = 0
+		buffer.cursorPosition.Col = 0
 	}
 	buffer.index()
 
@@ -581,8 +578,8 @@ func (buffer *Buffer) setPosition(col uint16, line uint16) {
 		useCol = buffer.ViewWidth() - 1
 	}
 
-	buffer.cursorX = useCol
-	buffer.cursorY = useLine
+	buffer.cursorPosition.Col = useCol
+	buffer.cursorPosition.Line = uint64(useLine)
 }
 
 func (buffer *Buffer) GetVisibleLines() []Line {
@@ -614,7 +611,8 @@ func (buffer *Buffer) reallyClear() {
 
 // creates if necessary
 func (buffer *Buffer) getCurrentLine() *Line {
-	return buffer.getViewLine(buffer.cursorY)
+	cursorVY := buffer.convertRawLineToViewLine(buffer.cursorPosition.Line)
+	return buffer.getViewLine(cursorVY)
 }
 
 func (buffer *Buffer) getViewLine(index uint16) *Line {
@@ -644,7 +642,7 @@ func (buffer *Buffer) eraseLine() {
 
 func (buffer *Buffer) eraseLineToCursor() {
 	line := buffer.getCurrentLine()
-	for i := 0; i <= int(buffer.cursorX); i++ {
+	for i := 0; i <= int(buffer.cursorPosition.Col); i++ {
 		if i < len(line.cells) {
 			line.cells[i].erase(buffer.cursorAttr.bgColour)
 		}
@@ -655,9 +653,9 @@ func (buffer *Buffer) eraseLineFromCursor() {
 	line := buffer.getCurrentLine()
 
 	if len(line.cells) > 0 {
-		cx := buffer.cursorX
+		cx := buffer.cursorPosition.Col
 		if int(cx) < len(line.cells) {
-			line.cells = line.cells[:buffer.cursorX]
+			line.cells = line.cells[:buffer.cursorPosition.Col]
 		}
 	}
 	max := int(buffer.ViewWidth()) - len(line.cells)
@@ -680,14 +678,14 @@ func (buffer *Buffer) eraseDisplay() {
 func (buffer *Buffer) deleteChars(n int) {
 
 	line := buffer.getCurrentLine()
-	if int(buffer.cursorX) >= len(line.cells) {
+	if int(buffer.cursorPosition.Col) >= len(line.cells) {
 		return
 	}
-	before := line.cells[:buffer.cursorX]
-	if int(buffer.cursorX)+n >= len(line.cells) {
-		n = len(line.cells) - int(buffer.cursorX)
+	before := line.cells[:buffer.cursorPosition.Col]
+	if int(buffer.cursorPosition.Col)+n >= len(line.cells) {
+		n = len(line.cells) - int(buffer.cursorPosition.Col)
 	}
-	after := line.cells[int(buffer.cursorX)+n:]
+	after := line.cells[int(buffer.cursorPosition.Col)+n:]
 	line.cells = append(before, after...)
 }
 
@@ -695,12 +693,12 @@ func (buffer *Buffer) eraseCharacters(n int) {
 
 	line := buffer.getCurrentLine()
 
-	max := int(buffer.cursorX) + n
+	max := int(buffer.cursorPosition.Col) + n
 	if max > len(line.cells) {
 		max = len(line.cells)
 	}
 
-	for i := int(buffer.cursorX); i < max; i++ {
+	for i := int(buffer.cursorPosition.Col); i < max; i++ {
 		line.cells[i].erase(buffer.cursorAttr.bgColour)
 	}
 }
@@ -708,14 +706,14 @@ func (buffer *Buffer) eraseCharacters(n int) {
 func (buffer *Buffer) eraseDisplayFromCursor() {
 	line := buffer.getCurrentLine()
 
-	max := int(buffer.cursorX)
+	max := int(buffer.cursorPosition.Col)
 	if max > len(line.cells) {
 		max = len(line.cells)
 	}
 
 	line.cells = line.cells[:max]
 
-	for rawLine := buffer.convertViewLineToRawLine(buffer.cursorY) + 1; int(rawLine) < len(buffer.lines); rawLine++ {
+	for rawLine := buffer.convertViewLineToRawLine(uint16(buffer.cursorPosition.Line)) + 1; int(rawLine) < len(buffer.lines); rawLine++ {
 		buffer.lines[int(rawLine)].cells = []Cell{}
 	}
 }
@@ -723,13 +721,13 @@ func (buffer *Buffer) eraseDisplayFromCursor() {
 func (buffer *Buffer) eraseDisplayToCursor() {
 	line := buffer.getCurrentLine()
 
-	for i := 0; i <= int(buffer.cursorX); i++ {
+	for i := 0; i <= int(buffer.cursorPosition.Col); i++ {
 		if i >= len(line.cells) {
 			break
 		}
 		line.cells[i].erase(buffer.cursorAttr.bgColour)
 	}
-	for i := uint16(0); i < buffer.cursorY; i++ {
+	for i := uint16(0); i < buffer.cursorPosition.Col; i++ {
 		rawLine := buffer.convertViewLineToRawLine(i)
 		if int(rawLine) < len(buffer.lines) {
 			buffer.lines[int(rawLine)].cells = []Cell{}
@@ -747,7 +745,7 @@ func (buffer *Buffer) resizeView(width uint16, height uint16) {
 
 	// @todo scroll to bottom on resize
 	line := buffer.getCurrentLine()
-	cXFromEndOfLine := len(line.cells) - int(buffer.cursorX+1)
+	cXFromEndOfLine := len(line.cells) - int(buffer.cursorPosition.Col+1)
 
 	cursorYMovement := 0
 
@@ -771,7 +769,7 @@ func (buffer *Buffer) resizeView(width uint16, height uint16) {
 					}
 				}
 
-				if i+1 <= int(buffer.cursorY) {
+				if i+1 <= int(buffer.cursorPosition.Line) {
 					cursorYMovement++
 				}
 
@@ -804,7 +802,7 @@ func (buffer *Buffer) resizeView(width uint16, height uint16) {
 				line.append(nextLine.cells[:moveCount]...)
 				if moveCount == len(nextLine.cells) {
 
-					if i+offset <= int(buffer.cursorY) {
+					if i+offset <= int(buffer.cursorPosition.Line) {
 						cursorYMovement--
 					}
 
@@ -829,11 +827,11 @@ func (buffer *Buffer) resizeView(width uint16, height uint16) {
 	if cY >= buffer.viewHeight {
 		cY = buffer.viewHeight - 1
 	}
-	buffer.cursorY = cY
+	buffer.cursorPosition.Line = uint64(cY)
 
 	// position cursorX
 	line = buffer.getCurrentLine()
-	buffer.cursorX = uint16((len(line.cells) - cXFromEndOfLine) - 1)
+	buffer.cursorPosition.Col = uint16((len(line.cells) - cXFromEndOfLine) - 1)
 
 	buffer.resetVerticalMargins(uint(buffer.viewHeight))
 }
@@ -864,7 +862,7 @@ func (buffer *Buffer) SaveViewLines(path string) error {
 }
 
 func (buffer *Buffer) CompareViewLines(path string) bool {
-	f, err := ioutil.ReadFile(path)
+	f, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
 	}
@@ -921,7 +919,7 @@ func (buffer *Buffer) tabSet(index uint16) {
 func (buffer *Buffer) tabClear(index uint16) {
 	var filtered []uint16
 	for _, stop := range buffer.tabStops {
-		if stop != buffer.cursorX {
+		if stop != buffer.cursorPosition.Col {
 			filtered = append(filtered, stop)
 		}
 	}
@@ -929,11 +927,11 @@ func (buffer *Buffer) tabClear(index uint16) {
 }
 
 func (buffer *Buffer) IsTabSetAtCursor() bool {
-	if buffer.cursorX%TabSize > 0 {
+	if buffer.cursorPosition.Col%TabSize > 0 {
 		return false
 	}
 	for _, stop := range buffer.tabStops {
-		if stop == buffer.cursorX {
+		if stop == buffer.cursorPosition.Col {
 			return true
 		}
 	}
@@ -941,11 +939,11 @@ func (buffer *Buffer) IsTabSetAtCursor() bool {
 }
 
 func (buffer *Buffer) tabClearAtCursor() {
-	buffer.tabClear(buffer.cursorX)
+	buffer.tabClear(buffer.cursorPosition.Col)
 }
 
 func (buffer *Buffer) tabSetAtCursor() {
-	buffer.tabSet(buffer.cursorX)
+	buffer.tabSet(buffer.cursorPosition.Col)
 }
 
 func (buffer *Buffer) GetScrollOffset() uint {

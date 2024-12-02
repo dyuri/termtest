@@ -47,6 +47,10 @@ func (line *Line) setNoBreak(nobreak bool) {
 	line.nobreak = nobreak
 }
 
+func (line *Line) Len() uint16 {
+	return uint16(len(line.cells))
+}
+
 func (line *Line) String() string {
 	runes := []rune{}
 	for _, cell := range line.cells {

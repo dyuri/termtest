@@ -126,19 +126,19 @@ func TestWritingNewLineAsFirstRuneOnWrappedLine(t *testing.T) {
 	b.modes.LineFeedMode = false
 
 	writeRaw(b, 'a', 'b', 'c')
-	assert.Equal(t, uint16(3), b.cursorX)
-	assert.Equal(t, uint16(0), b.cursorY)
+	assert.Equal(t, uint16(3), b.cursorPosition.Col)
+	assert.Equal(t, uint64(0), b.cursorPosition.Line)
 	b.newLine()
-	assert.Equal(t, uint16(0), b.cursorX)
-	assert.Equal(t, uint16(1), b.cursorY)
+	assert.Equal(t, uint16(0), b.cursorPosition.Col)
+	assert.Equal(t, uint64(1), b.cursorPosition.Line)
 
 	writeRaw(b, 'd', 'e', 'f')
-	assert.Equal(t, uint16(3), b.cursorX)
-	assert.Equal(t, uint16(1), b.cursorY)
+	assert.Equal(t, uint16(3), b.cursorPosition.Col)
+	assert.Equal(t, uint64(1), b.cursorPosition.Line)
 	b.newLine()
 
-	assert.Equal(t, uint16(0), b.cursorX)
-	assert.Equal(t, uint16(2), b.cursorY)
+	assert.Equal(t, uint16(0), b.cursorPosition.Col)
+	assert.Equal(t, uint64(2), b.cursorPosition.Line)
 
 	require.Equal(t, 3, len(b.lines))
 	assert.Equal(t, "abc", b.lines[0].String())
@@ -358,10 +358,10 @@ func TestCarriageReturnOnWrappedLine(t *testing.T) {
 
 func TestCarriageReturnOnLineThatDoesntExist(t *testing.T) {
 	b := makeBufferForTesting(6, 10)
-	b.cursorY = 3
+	b.cursorPosition.Line = 3
 	b.carriageReturn()
-	assert.Equal(t, uint16(0), b.cursorX)
-	assert.Equal(t, uint16(3), b.cursorY)
+	assert.Equal(t, uint16(0), b.cursorPosition.Col)
+	assert.Equal(t, uint64(3), b.cursorPosition.Line)
 }
 
 func TestGetCell(t *testing.T) {
@@ -408,10 +408,10 @@ func TestGetCellWithBadCursor(t *testing.T) {
 
 func TestCursorPositionQuerying(t *testing.T) {
 	b := makeBufferForTesting(80, 20)
-	b.cursorX = 17
-	b.cursorY = 9
-	assert.Equal(t, b.cursorX, b.CursorColumn())
-	assert.Equal(t, b.cursorY, b.CursorLine())
+	b.cursorPosition.Col = 17
+	b.cursorPosition.Line = 9
+	assert.Equal(t, b.cursorPosition.Col, b.CursorColumn())
+	assert.Equal(t, uint16(b.cursorPosition.Line), b.CursorLine())
 }
 
 func TestRawPositionQuerying(t *testing.T) {
@@ -445,8 +445,8 @@ func TestRawPositionQuerying(t *testing.T) {
 	b.newLine()
 	writeRaw(b, []rune("a")...)
 
-	b.cursorX = 3
-	b.cursorY = 4
+	b.cursorPosition.Col = 3
+	b.cursorPosition.Line = 4
 	assert.Equal(t, uint64(9), b.RawLine())
 }
 
@@ -559,8 +559,8 @@ func TestHorizontalResizeView(t *testing.T) {
 
 	writeRaw(b, []rune(`goodbyegoodbye`)...)
 
-	require.Equal(t, uint16(14), b.cursorX)
-	require.Equal(t, uint16(1), b.cursorY)
+	require.Equal(t, uint16(14), b.cursorPosition.Col)
+	require.Equal(t, uint64(1), b.cursorPosition.Line)
 
 	b.resizeView(40, 10)
 
@@ -568,8 +568,8 @@ func TestHorizontalResizeView(t *testing.T) {
 hellohellohellohello
 goodbyegoodbye`
 
-	require.Equal(t, uint16(14), b.cursorX)
-	require.Equal(t, uint16(2), b.cursorY)
+	require.Equal(t, uint16(14), b.cursorPosition.Col)
+	require.Equal(t, uint64(2), b.cursorPosition.Line)
 
 	lines := b.GetVisibleLines()
 	strs := []string{}
@@ -622,8 +622,8 @@ goodbyegoodbye`
 	}
 	require.Equal(t, expected, strings.Join(strs, "\n"))
 
-	require.Equal(t, uint16(1), b.cursorY)
-	require.Equal(t, uint16(14), b.cursorX)
+	require.Equal(t, uint64(1), b.cursorPosition.Line)
+	require.Equal(t, uint16(14), b.cursorPosition.Col)
 }
 
 func TestBufferMaxLines(t *testing.T) {

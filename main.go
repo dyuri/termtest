@@ -43,7 +43,7 @@ func main() {
 		updateChan <- struct{}{}
 	}()
 
-	<-time.After(1 * time.Second)
+	<-time.After(2 * time.Second)
 
 	render(terminal.GetActiveBuffer())
 }

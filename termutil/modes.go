@@ -9,6 +9,8 @@ type Modes struct {
 	LineFeedMode          bool
 	ScreenMode            bool // DECSCNM (black on white background)
 	AutoWrap              bool
+	SixelScrolling        bool
+	BracketedPasteMode    bool
 }
 
 type MouseMode uint

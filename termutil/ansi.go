@@ -4,6 +4,9 @@ func (t *Terminal) handleANSI(readChan chan MeasuredRune) (renderRequired bool) 
 	// if the byte is an escape character, read the next byte to determine which one
 	r := <-readChan
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	switch r.Rune {
 	case '[':
 		return t.handleCSI(readChan)
@@ -34,6 +37,7 @@ func (t *Terminal) handleANSI(readChan chan MeasuredRune) (renderRequired bool) 
 	case 'M':
 		t.GetActiveBuffer().reverseIndex()
 	case 'P': // TODO swallow sixel output to prevent mess
+		// TODO t.handleSixel(readChan)
 		return false
 	case 'c':
 		t.GetActiveBuffer().clear()
@@ -41,9 +45,8 @@ func (t *Terminal) handleANSI(readChan chan MeasuredRune) (renderRequired bool) 
 		return t.handleScreenState(readChan)
 	case '^':
 		return t.handlePrivacyMessage(readChan)
-	default: // TODO if the escape sequence is unknown, pass it to real stdout - review as this is kind of risky...
+	default:
 		t.log("UNKNOWN ESCAPE SEQUENCE: 0x%X", r.Rune)
-		//_ = t.writeToRealStdOut(0x1b, r.Rune)
 		return false
 	}
 

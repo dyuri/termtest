@@ -6,14 +6,16 @@ import (
 )
 
 type CellAttributes struct {
-	fgColour  color.Color
-	bgColour  color.Color
-	bold      bool
-	dim       bool
-	underline bool
-	blink     bool
-	inverse   bool
-	hidden    bool
+	fgColour      color.Color
+	bgColour      color.Color
+	bold          bool
+	italic	      bool
+	dim           bool
+	underline     bool
+	strikethrough bool
+	blink         bool
+	inverse       bool
+	hidden        bool
 }
 
 func (cellAttr *CellAttributes) reverseVideo() {
