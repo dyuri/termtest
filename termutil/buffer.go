@@ -71,7 +71,7 @@ func (buffer *Buffer) IsCursorVisible() bool {
 }
 
 func (buffer *Buffer) HasScrollableRegion() bool {
-	return buffer.topMargin > 0 || buffer.bottomMargin < uint(buffer.ViewHeight())-1
+	return buffer.topMargin > 0 || buffer.bottomMargin < uint(buffer.viewHeight)-1
 }
 
 func (buffer *Buffer) InScrollableRegion() bool {
@@ -349,6 +349,7 @@ func (buffer *Buffer) index() {
 			copy(buffer.lines, buffer.lines[uint64(len(buffer.lines))-maxLines:])
 			buffer.lines = buffer.lines[:maxLines]
 		}
+		buffer.cursorPosition.Line = uint64(maxLines - 1)
 	} else {
 		buffer.cursorPosition.Line++
 	}

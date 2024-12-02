@@ -10,8 +10,8 @@ import (
 func render(b *termutil.Buffer) {
 	var lastCellAttr termutil.CellAttributes
 
-	for line := range uint16(b.Height()) {
-		for row := range b.Width() {
+	for line := range b.ViewHeight() {
+		for row := range b.ViewWidth() {
 			cell := b.GetCell(row, line)
 			if cell != nil {
 				r := cell.Rune().Rune
@@ -33,17 +33,22 @@ func render(b *termutil.Buffer) {
 }
 
 func main() {
-	terminal := termutil.New(termutil.WithCommand("/bin/ls", "--color"))
+	terminal := termutil.New(termutil.WithCommand("exa", "-la", "/home/dyuri/alma"))
 	updateChan := make(chan struct{})
 	// closeChan := make(chan struct{})
 
-	terminal.Run(updateChan, 10, 80)
+	terminal.Run(updateChan, 20, 80)
 
 	go func() {
-		updateChan <- struct{}{}
+		for {
+			<-time.After(1 * time.Second)
+			updateChan <- struct{}{}
+		}
 	}()
 
-	<-time.After(2 * time.Second)
+	<-time.After(5 * time.Second)
 
 	render(terminal.GetActiveBuffer())
+	fmt.Printf("Active buffer length: %d\n", terminal.GetActiveBuffer().ViewHeight())
+	fmt.Printf("Active buffer scroll offset: %d\n", terminal.GetActiveBuffer().GetScrollOffset())
 }
