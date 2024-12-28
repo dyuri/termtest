@@ -728,7 +728,7 @@ func (buffer *Buffer) eraseDisplayToCursor() {
 		}
 		line.cells[i].erase(buffer.cursorAttr.bgColour)
 	}
-	for i := uint16(0); i < buffer.cursorPosition.Col; i++ {
+	for i := uint16(0); i < uint16(buffer.cursorPosition.Line); i++ {
 		rawLine := buffer.convertViewLineToRawLine(i)
 		if int(rawLine) < len(buffer.lines) {
 			buffer.lines[int(rawLine)].cells = []Cell{}
